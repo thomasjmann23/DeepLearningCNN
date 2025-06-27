@@ -1,0 +1,13 @@
+FASHION-MNIST PREDICTION RESULTS
+==================================================
+Timestamp: 2025-06-27 14:48:39
+Model: deep_final_20250627_134218.keras
+
+1. black_shirt.png
+   Predicted: T-shirt/top
+   Confidence: 0.6142 (61.42%)
+   Top 3:
+     1. T-shirt/top: 0.6142
+     2. Shirt: 0.2690
+     3. Pullover: 0.0621
+

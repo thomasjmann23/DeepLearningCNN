@@ -1,0 +1,25 @@
+FASHION-MNIST CNN TRAINING REPORT
+==================================================
+
+Model Type: deep
+Timestamp: 2025-06-27 14:01:56
+
+RESULTS:
+--------------------
+Test Accuracy: 0.9228 (92.28%)
+Test Loss: 0.2196
+
+PER-CLASS ACCURACY:
+--------------------
+T-shirt/top    : 0.9120 (91.20%)
+Trouser        : 0.9870 (98.70%)
+Pullover       : 0.9060 (90.60%)
+Dress          : 0.9250 (92.50%)
+Coat           : 0.8940 (89.40%)
+Sandal         : 0.9760 (97.60%)
+Shirt          : 0.6990 (69.90%)
+Sneaker        : 0.9870 (98.70%)
+Bag            : 0.9860 (98.60%)
+Ankle boot     : 0.9560 (95.60%)
+
+Report saved: reports/training_report_deep_20250627_140156.txt

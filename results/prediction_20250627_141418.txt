@@ -1,0 +1,13 @@
+FASHION-MNIST PREDICTION RESULTS
+==================================================
+Timestamp: 2025-06-27 14:14:18
+Model: deep_final_20250627_134218.keras
+
+1. trouser_black.png
+   Predicted: Trouser
+   Confidence: 0.9999 (99.99%)
+   Top 3:
+     1. Trouser: 0.9999
+     2. Dress: 0.0001
+     3. T-shirt/top: 0.0000
+
