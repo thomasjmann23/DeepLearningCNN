@@ -144,78 +144,109 @@ class FashionMNISTModelBuilder:
         
         return model.summary()
     
-    def create_callbacks(self, model_save_path='best_model.keras', patience=5):
-        """
-        Create training callbacks
-        
-        Args:
-            model_save_path: Path to save best model
-            patience: Patience for early stopping
-            
-        Returns:
-            list: List of callbacks
-        """
-        callbacks = [
-            EarlyStopping(
-                monitor='val_accuracy',
-                patience=patience,
-                restore_best_weights=True,
-                verbose=1,
-                mode='max'
-            ),
-            
-            ReduceLROnPlateau(
-                monitor='val_loss',
-                factor=0.2,
-                patience=max(2, patience//2),
-                min_lr=0.00001,
-                verbose=1,
-                mode='min'
-            ),
-            
-            ModelCheckpoint(
-                filepath=model_save_path,
-                monitor='val_accuracy',
-                save_best_only=True,
-                save_weights_only=False,
-                verbose=1,
-                mode='max'
-            )
-        ]
-        
-        return callbacks
+def create_callbacks(self, model_save_path='best_model.keras', patience=5):
+    """
+    Create training callbacks - simplified for deployment compatibility
     
-    def load_model(self, model_path):
-        """
-        Load a saved model
+    Args:
+        model_save_path: Path to save best model
+        patience: Patience for early stopping
         
-        Args:
-            model_path: Path to saved model
-            
-        Returns:
-            tensorflow.keras.Model: Loaded model
-        """
+    Returns:
+        list: List of callbacks
+    """
+    callbacks = [
+        EarlyStopping(
+            monitor='val_accuracy',
+            patience=patience,
+            restore_best_weights=True,
+            verbose=1,
+            mode='max'
+        ),
+        
+        ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=0.2,
+            patience=max(2, patience//2),
+            min_lr=0.00001,
+            verbose=1,
+            mode='min'
+        )
+        # Removing ModelCheckpoint to avoid save format issues
+    ]
+    
+    return callbacks
+
+def load_model(self, model_path):
+    """
+    Load a saved model with better error handling
+    
+    Args:
+        model_path: Path to saved model
+        
+    Returns:
+        tensorflow.keras.Model: Loaded model
+    """
+    try:
+        import tensorflow as tf
+        # Try different loading methods
+        
+        # Method 1: Standard loading
         try:
             model = tf.keras.models.load_model(model_path)
             print(f"✓ Model loaded from: {model_path}")
             return model
-        except Exception as e:
-            print(f"✗ Error loading model: {e}")
-            return None
+        except Exception as e1:
+            print(f"Standard loading failed: {e1}")
+            
+            # Method 2: Load with custom options
+            try:
+                model = tf.keras.models.load_model(model_path, compile=False)
+                # Recompile the model
+                model.compile(
+                    optimizer='adam',
+                    loss='categorical_crossentropy',
+                    metrics=['accuracy']
+                )
+                print(f"✓ Model loaded and recompiled from: {model_path}")
+                return model
+            except Exception as e2:
+                print(f"Custom loading failed: {e2}")
+                return None
+                
+    except Exception as e:
+        print(f"✗ Error loading model: {e}")
+        return None
+
+def save_model(self, model, save_path):
+    """
+    Save model to file with better error handling
     
-    def save_model(self, model, save_path):
-        """
-        Save model to file
-        
-        Args:
-            model: Keras model to save
-            save_path: Path to save model
-        """
+    Args:
+        model: Keras model to save
+        save_path: Path to save model
+    """
+    try:
+        # Save in the native Keras format
+        model.save(save_path, save_format='keras')
+        print(f"✓ Model saved to: {save_path}")
+    except Exception as e:
         try:
-            model.save(save_path)
-            print(f"✓ Model saved to: {save_path}")
-        except Exception as e:
-            print(f"✗ Error saving model: {e}")
+            # Fallback: save weights only
+            weights_path = save_path.replace('.keras', '_weights.h5')
+            model.save_weights(weights_path)
+            
+            # Save architecture
+            arch_path = save_path.replace('.keras', '_architecture.json')
+            with open(arch_path, 'w') as f:
+                f.write(model.to_json())
+            
+            print(f"✓ Model weights saved to: {weights_path}")
+            print(f"✓ Model architecture saved to: {arch_path}")
+            
+        except Exception as e2:
+            print(f"✗ Error saving model: {e2}")
+
 
 
 def main():

@@ -186,37 +186,37 @@ def train_model_page():
     with col1:
         model_type = st.selectbox(
             "Model Architecture",
-            options=['simple', 'deep', 'lightweight'],
-            help="Simple: Fast training, good for testing. Deep: Better accuracy, slower training. Lightweight: Fastest, lower accuracy."
+            options=['simple', 'lightweight'],  # Remove 'deep' for deployment
+            help="Simple: Good balance. Lightweight: Fastest, good for deployment."
         )
         
-        epochs = st.slider("Number of Epochs", min_value=1, max_value=50, value=15)
+        epochs = st.slider("Number of Epochs", min_value=3, max_value=15, value=8)  # Reduced max
         
     with col2:
-        batch_size = st.selectbox("Batch Size", options=[32, 64, 128, 256], index=2)
+        batch_size = st.selectbox("Batch Size", options=[64, 128], index=0)  # Smaller batches
         
-        use_validation_split = st.checkbox("Use Validation Split", value=False)
+        use_validation_split = st.checkbox("Use Validation Split", value=True)  # Default to True
         if use_validation_split:
             validation_split = st.slider("Validation Split", min_value=0.1, max_value=0.3, value=0.2)
         else:
             validation_split = None
     
-    # Model architecture preview
+    # Model architecture preview (simplified)
     st.subheader("Model Architecture Preview")
     if st.button("Show Model Architecture"):
         try:
             if model_type == 'simple':
                 preview_model = st.session_state.model_builder.build_simple_cnn()
-            elif model_type == 'deep':
-                preview_model = st.session_state.model_builder.build_deeper_cnn()
-            else:
+            else:  # lightweight
                 preview_model = st.session_state.model_builder.build_lightweight_cnn()
             
-            # Display model summary
+            # Display model summary in a more streamlit-friendly way
             stringlist = []
             preview_model.summary(print_fn=lambda x: stringlist.append(x))
             model_summary = "\n".join(stringlist)
-            st.text(model_summary)
+            
+            # Show in code block for better formatting
+            st.code(model_summary, language="text")
             
             # Model stats
             col1, col2, col3 = st.columns(3)
@@ -235,49 +235,71 @@ def train_model_page():
     # Training section
     st.subheader("Start Training")
     
+    # Warning for deployment
+    st.warning("⚠️ Training on deployment platforms may be slow due to resource limits. For best results, train locally and load the model.")
+    
     if st.button("Begin Training", type="primary"):
         try:
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            # Training progress callback
-            class StreamlitCallback:
-                def __init__(self, progress_bar, status_text):
-                    self.progress_bar = progress_bar
-                    self.status_text = status_text
-                    self.epoch = 0
-                    self.epochs = epochs
-                
-                def on_epoch_end(self, epoch, logs=None):
-                    self.epoch = epoch + 1
-                    progress = self.epoch / self.epochs
-                    self.progress_bar.progress(progress)
-                    
-                    if logs:
-                        acc = logs.get('accuracy', 0)
-                        val_acc = logs.get('val_accuracy', 0)
-                        self.status_text.text(f"Epoch {self.epoch}/{self.epochs} - Accuracy: {acc:.4f} - Val Accuracy: {val_acc:.4f}")
+            # Create progress tracking
+            progress_container = st.container()
+            with progress_container:
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                log_container = st.empty()
             
             status_text.text("Initializing training...")
             
-            # Train model
-            model, history = st.session_state.trainer.train_model(
-                model_type=model_type,
-                epochs=epochs,
+            # Use session state to avoid recomputation
+            if 'training_data' not in st.session_state:
+                with st.spinner("Loading Fashion-MNIST dataset..."):
+                    x_train, y_train, x_test, y_test = st.session_state.data_loader.load_data()
+                    st.session_state.training_data = (x_train, y_train, x_test, y_test)
+            else:
+                x_train, y_train, x_test, y_test = st.session_state.training_data
+            
+            # Build model with explicit eager execution
+            status_text.text("Building model...")
+            
+            # Clear any existing models from memory
+            if hasattr(st.session_state, 'trained_model') and st.session_state.trained_model is not None:
+                del st.session_state.trained_model
+            
+            import tensorflow as tf
+            tf.config.run_functions_eagerly(True)  # Enable eager execution
+            
+            if model_type == 'simple':
+                model = st.session_state.model_builder.build_simple_cnn()
+            else:  # lightweight
+                model = st.session_state.model_builder.build_lightweight_cnn()
+            
+            status_text.text("Starting training...")
+            
+            # Custom training loop with progress updates
+            history_data = {'loss': [], 'accuracy': [], 'val_loss': [], 'val_accuracy': []}
+            
+            # Simple training without complex callbacks that might cause issues
+            validation_data = (x_test, y_test) if not validation_split else None
+            
+            # Fit model with minimal callbacks
+            history = model.fit(
+                x_train, y_train,
                 batch_size=batch_size,
-                validation_split=validation_split,
-                save_best=True
+                epochs=epochs,
+                validation_data=validation_data,
+                validation_split=validation_split if validation_split else None,
+                verbose=0  # Suppress TensorFlow output
             )
             
-            # Store in session state
-            st.session_state.trained_model = model
-            st.session_state.training_history = history
-            
+            # Update progress
             progress_bar.progress(1.0)
             status_text.text("Training completed!")
             
+            # Store results
+            st.session_state.trained_model = model
+            st.session_state.training_history = history
+            
             # Display results
-            st.success("Model training completed successfully!")
+            st.success("✅ Model training completed successfully!")
             
             # Show training curves
             st.subheader("Training Results")
@@ -286,8 +308,10 @@ def train_model_page():
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
             
             # Accuracy plot
-            ax1.plot(history.history['accuracy'], label='Training Accuracy', linewidth=2)
-            ax1.plot(history.history['val_accuracy'], label='Validation Accuracy', linewidth=2)
+            if 'accuracy' in history.history:
+                ax1.plot(history.history['accuracy'], label='Training Accuracy', linewidth=2)
+            if 'val_accuracy' in history.history:
+                ax1.plot(history.history['val_accuracy'], label='Validation Accuracy', linewidth=2)
             ax1.set_title('Model Accuracy')
             ax1.set_xlabel('Epoch')
             ax1.set_ylabel('Accuracy')
@@ -296,8 +320,10 @@ def train_model_page():
             ax1.set_ylim([0, 1])
             
             # Loss plot
-            ax2.plot(history.history['loss'], label='Training Loss', linewidth=2)
-            ax2.plot(history.history['val_loss'], label='Validation Loss', linewidth=2)
+            if 'loss' in history.history:
+                ax2.plot(history.history['loss'], label='Training Loss', linewidth=2)
+            if 'val_loss' in history.history:
+                ax2.plot(history.history['val_loss'], label='Validation Loss', linewidth=2)
             ax2.set_title('Model Loss')
             ax2.set_xlabel('Epoch')
             ax2.set_ylabel('Loss')
@@ -306,119 +332,149 @@ def train_model_page():
             
             plt.tight_layout()
             st.pyplot(fig)
+            plt.close()  # Important: close figure to free memory
             
             # Final metrics
-            final_acc = history.history['accuracy'][-1]
-            final_val_acc = history.history['val_accuracy'][-1]
-            final_loss = history.history['loss'][-1]
-            final_val_loss = history.history['val_loss'][-1]
-            
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Final Training Accuracy", f"{final_acc:.4f}")
-            with col2:
-                st.metric("Final Validation Accuracy", f"{final_val_acc:.4f}")
-            with col3:
-                st.metric("Final Training Loss", f"{final_loss:.4f}")
-            with col4:
-                st.metric("Final Validation Loss", f"{final_val_loss:.4f}")
+            if history.history:
+                final_acc = history.history.get('accuracy', [0])[-1]
+                final_val_acc = history.history.get('val_accuracy', [0])[-1]
+                final_loss = history.history.get('loss', [0])[-1]
+                final_val_loss = history.history.get('val_loss', [0])[-1]
                 
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Final Training Accuracy", f"{final_acc:.4f}")
+                with col2:
+                    st.metric("Final Validation Accuracy", f"{final_val_acc:.4f}")
+                with col3:
+                    st.metric("Final Training Loss", f"{final_loss:.4f}")
+                with col4:
+                    st.metric("Final Validation Loss", f"{final_val_loss:.4f}")
+            
+            # Offer to download model
+            st.subheader("Save Model")
+            if st.button("Prepare Model for Download"):
+                try:
+                    import tempfile
+                    import base64
+                    
+                    # Save model to temporary file
+                    with tempfile.NamedTemporaryFile(suffix='.keras', delete=False) as tmp_file:
+                        model.save(tmp_file.name, save_format='keras')
+                        
+                        # Read file for download
+                        with open(tmp_file.name, 'rb') as f:
+                            model_bytes = f.read()
+                        
+                        # Create download button
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        filename = f"{model_type}_model_{timestamp}.keras"
+                        
+                        st.download_button(
+                            label="📥 Download Trained Model",
+                            data=model_bytes,
+                            file_name=filename,
+                            mime="application/octet-stream",
+                            help="Download the trained model to use locally"
+                        )
+                        
+                        # Clean up temp file
+                        os.unlink(tmp_file.name)
+                        
+                except Exception as e:
+                    st.error(f"Error preparing model for download: {e}")
+                    
         except Exception as e:
-            st.error(f"Training failed: {e}")
+            st.error(f"❌ Training failed: {str(e)[:200]}...")  # Truncate long error messages
+            
+            # Show troubleshooting info
+            with st.expander("Troubleshooting"):
+                st.write("""
+                **Common issues and solutions:**
+                
+                1. **Memory Issues**: Try using the 'lightweight' model with smaller batch size (64)
+                2. **Version Conflicts**: This may be due to TensorFlow version incompatibility
+                3. **Resource Limits**: Training on free deployment platforms is limited
+                
+                **Recommended approach for deployment:**
+                - Train models locally using the command-line interface
+                - Upload pre-trained models to your repository
+                - Use the 'Load & Test Model' feature instead
+                """)
 
 def load_test_model_page():
-    """Load existing model and test it"""
+    """Load existing model and test it - Enhanced version"""
     st.markdown('<h2 class="section-header">Load & Test Model</h2>', unsafe_allow_html=True)
     
-    # List available models
+    # Option 1: Upload model file
+    st.subheader("Upload Model File")
+    uploaded_model = st.file_uploader(
+        "Choose a model file (.keras)",
+        type=['keras'],
+        help="Upload a pre-trained Fashion-MNIST model"
+    )
+    
+    if uploaded_model is not None:
+        # Save uploaded file temporarily
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.keras') as tmp_file:
+            tmp_file.write(uploaded_model.getvalue())
+            tmp_model_path = tmp_file.name
+        
+        try:
+            if st.button("Load Uploaded Model"):
+                if st.session_state.predictor.load_model(tmp_model_path):
+                    st.success(f"✅ Model loaded successfully: {uploaded_model.name}")
+                    
+                    # Show model info
+                    if st.session_state.predictor.model is not None:
+                        st.subheader("Model Information")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Model Name", st.session_state.predictor.model.name)
+                        with col2:
+                            st.metric("Parameters", f"{st.session_state.predictor.model.count_params():,}")
+                        with col3:
+                            st.metric("Layers", len(st.session_state.predictor.model.layers))
+                else:
+                    st.error("❌ Failed to load model")
+        finally:
+            # Clean up temporary file
+            if os.path.exists(tmp_model_path):
+                os.unlink(tmp_model_path)
+    
+    st.markdown("---")
+    
+    # Option 2: Load from local directory (for local development)
+    st.subheader("Local Models")
+    st.info("💡 **For deployment**: Upload your pre-trained model files using the upload option above.")
+    
+    # List available models (if any)
     model_dir = 'models'
     if os.path.exists(model_dir):
         model_files = [f for f in os.listdir(model_dir) if f.endswith('.keras')]
         
         if model_files:
-            st.subheader("Available Models")
-            selected_model = st.selectbox("Choose a model:", model_files)
+            selected_model = st.selectbox("Choose a local model:", model_files)
             
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Load Model"):
-                    model_path = os.path.join(model_dir, selected_model)
-                    if st.session_state.predictor.load_model(model_path):
-                        st.success(f"Model loaded successfully: {selected_model}")
-                        
-                        # Show model info
-                        st.subheader("Model Information")
-                        st.write(f"**Model Name:** {st.session_state.predictor.model.name}")
-                        st.write(f"**Input Shape:** {st.session_state.predictor.model.input_shape}")
-                        st.write(f"**Output Shape:** {st.session_state.predictor.model.output_shape}")
-                        st.write(f"**Parameters:** {st.session_state.predictor.model.count_params():,}")
-                    else:
-                        st.error("Failed to load model")
-            
-            with col2:
-                if st.button("Test Model on Dataset"):
-                    if st.session_state.predictor.model is not None:
-                        with st.spinner("Testing model on dataset..."):
-                            try:
-                                # Load test data
-                                x_train, y_train, x_test, y_test = st.session_state.data_loader.load_data()
-                                
-                                # Evaluate model
-                                test_loss, test_accuracy = st.session_state.predictor.model.evaluate(x_test, y_test, verbose=0)
-                                
-                                # Show results
-                                st.subheader("Test Results")
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    st.metric("Test Accuracy", f"{test_accuracy:.4f} ({test_accuracy*100:.2f}%)")
-                                with col2:
-                                    st.metric("Test Loss", f"{test_loss:.4f}")
-                                
-                                # Get predictions for confusion matrix
-                                y_pred_proba = st.session_state.predictor.model.predict(x_test, verbose=0)
-                                y_pred = np.argmax(y_pred_proba, axis=1)
-                                y_true = np.argmax(y_test, axis=1)
-                                
-                                # Show sample predictions
-                                st.subheader("Sample Predictions")
-                                sample_indices = np.random.choice(len(x_test), 12, replace=False)
-                                
-                                fig, axes = plt.subplots(3, 4, figsize=(12, 9))
-                                for i, idx in enumerate(sample_indices):
-                                    row, col = i // 4, i % 4
-                                    
-                                    image = x_test[idx].reshape(28, 28)
-                                    true_label = y_true[idx]
-                                    pred_label = y_pred[idx]
-                                    confidence = y_pred_proba[idx][pred_label]
-                                    
-                                    axes[row, col].imshow(image, cmap='gray')
-                                    
-                                    true_class = st.session_state.data_loader.get_class_name(true_label)
-                                    pred_class = st.session_state.data_loader.get_class_name(pred_label)
-                                    
-                                    if true_label == pred_label:
-                                        color = 'green'
-                                        title = f'Correct: {pred_class}\n{confidence:.2%}'
-                                    else:
-                                        color = 'red'
-                                        title = f'Wrong: {pred_class}\nTrue: {true_class}\n{confidence:.2%}'
-                                    
-                                    axes[row, col].set_title(title, color=color, fontsize=9)
-                                    axes[row, col].axis('off')
-                                
-                                plt.suptitle('Sample Test Predictions', fontsize=14)
-                                plt.tight_layout()
-                                st.pyplot(fig)
-                                
-                            except Exception as e:
-                                st.error(f"Error testing model: {e}")
-                    else:
-                        st.warning("Please load a model first")
+            if st.button("Load Local Model"):
+                model_path = os.path.join(model_dir, selected_model)
+                if st.session_state.predictor.load_model(model_path):
+                    st.success(f"✅ Model loaded successfully: {selected_model}")
+                else:
+                    st.error("❌ Failed to load model")
         else:
-            st.warning("No trained models found in the models directory")
+            st.info("No local models found. Train a model or upload one above.")
     else:
-        st.warning("Models directory not found")
+        st.info("No models directory found.")
+    
+    # Test loaded model
+    if st.session_state.predictor.model is not None:
+        st.markdown("---")
+        st.subheader("Test Loaded Model")
+        
+        if st.button("🧪 Test Model on Dataset"):
+            test_model_performance()
 
 def predict_images_page():
     """Image prediction interface"""
@@ -1298,6 +1354,87 @@ def home_page():
             st.write("**GPU Available:** No (running on CPU)")
         
         st.write(f"**Python Version:** {os.sys.version}")
+
+def test_model_performance():
+    """Test model performance on dataset"""
+    with st.spinner("Testing model on Fashion-MNIST dataset..."):
+        try:
+            # Load test data
+            if 'training_data' not in st.session_state:
+                x_train, y_train, x_test, y_test = st.session_state.data_loader.load_data()
+                st.session_state.training_data = (x_train, y_train, x_test, y_test)
+            else:
+                x_train, y_train, x_test, y_test = st.session_state.training_data
+            
+            # Evaluate model
+            test_loss, test_accuracy = st.session_state.predictor.model.evaluate(x_test, y_test, verbose=0)
+            
+            # Show results
+            st.subheader("Test Results")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Test Accuracy", f"{test_accuracy:.4f} ({test_accuracy*100:.2f}%)")
+            with col2:
+                st.metric("Test Loss", f"{test_loss:.4f}")
+            
+            # Performance gauge
+            if test_accuracy >= 0.9:
+                st.success("🎉 Excellent performance!")
+            elif test_accuracy >= 0.8:
+                st.info("👍 Good performance!")
+            elif test_accuracy >= 0.7:
+                st.warning("⚠️ Moderate performance")
+            else:
+                st.error("💡 Model may need more training")
+            
+            # Show sample predictions
+            show_sample_predictions(x_test, y_test)
+            
+        except Exception as e:
+            st.error(f"Error testing model: {e}")
+
+def show_sample_predictions(x_test, y_test):
+    """Show sample predictions from the test set"""
+    st.subheader("Sample Predictions")
+    
+    # Get random sample
+    sample_indices = np.random.choice(len(x_test), 12, replace=False)
+    
+    # Get predictions
+    y_pred_proba = st.session_state.predictor.model.predict(x_test[sample_indices], verbose=0)
+    y_pred = np.argmax(y_pred_proba, axis=1)
+    y_true = np.argmax(y_test[sample_indices], axis=1)
+    
+    # Create visualization
+    fig, axes = plt.subplots(3, 4, figsize=(12, 9))
+    
+    for i, idx in enumerate(sample_indices):
+        row, col = i // 4, i % 4
+        
+        image = x_test[idx].reshape(28, 28)
+        true_label = y_true[i]
+        pred_label = y_pred[i]
+        confidence = y_pred_proba[i][pred_label]
+        
+        axes[row, col].imshow(image, cmap='gray')
+        
+        true_class = st.session_state.data_loader.get_class_name(true_label)
+        pred_class = st.session_state.data_loader.get_class_name(pred_label)
+        
+        if true_label == pred_label:
+            color = 'green'
+            title = f'✓ {pred_class}\n{confidence:.2%}'
+        else:
+            color = 'red'
+            title = f'✗ {pred_class}\nTrue: {true_class}\n{confidence:.2%}'
+        
+        axes[row, col].set_title(title, color=color, fontsize=9)
+        axes[row, col].axis('off')
+    
+    plt.suptitle('Sample Test Predictions (✓ = Correct, ✗ = Incorrect)', fontsize=14)
+    plt.tight_layout()
+    st.pyplot(fig)
+    plt.close()  # Important for memory management
 
 # Main app logic
 if page == "Home":
