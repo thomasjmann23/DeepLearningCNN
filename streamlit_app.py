@@ -22,6 +22,469 @@ from image_preprocessor import ImagePreprocessor
 from predictor import FashionMNISTPredictor
 from dimensionality_visualization import DimensionalityVisualizer
 
+# Add this helper function near the top of streamlit_app.py, after the imports
+def compute_tsne_compatible(features, perplexity=30, max_iter=1000, random_state=42):
+    """
+    Compute t-SNE embedding with version compatibility for different scikit-learn versions
+    """
+    from sklearn.manifold import TSNE
+    
+    # Try with max_iter first (newer scikit-learn versions)
+    try:
+        tsne = TSNE(
+            n_components=2,
+            perplexity=perplexity,
+            max_iter=max_iter,
+            random_state=random_state,
+            verbose=0  # Use verbose=0 for Streamlit (no console output)
+        )
+    except TypeError:
+        # Fallback for older scikit-learn versions that still use n_iter
+        try:
+            tsne = TSNE(
+                n_components=2,
+                perplexity=perplexity,
+                n_iter=max_iter,  # Use old parameter name
+                random_state=random_state,
+                verbose=0
+            )
+        except TypeError:
+            # Last fallback with minimal parameters
+            tsne = TSNE(
+                n_components=2,
+                perplexity=perplexity,
+                random_state=random_state
+            )
+    
+    return tsne.fit_transform(features)
+
+# CHANGE 1: In dimensionality_visualization_page() function around line 875
+# Replace this line:
+# tsne_embedding = st.session_state.visualizer.compute_tsne(
+#     features, perplexity=tsne_perplexity, n_iter=tsne_iterations
+# )
+# 
+# With:
+# tsne_embedding = compute_tsne_compatible(
+#     features, perplexity=tsne_perplexity, max_iter=tsne_iterations
+# )
+
+# CHANGE 2: In the same function around line 1015, replace:
+# tsne_embedding = st.session_state.visualizer.compute_tsne(all_features)
+#
+# With:
+# tsne_embedding = compute_tsne_compatible(all_features)
+
+# CHANGE 3: Update the requirements.txt to pin scikit-learn version
+# Add this line to requirements.txt:
+# scikit-learn>=1.2.0,<1.4.0
+
+# Here's the complete corrected section for the dataset visualization:
+
+def dimensionality_visualization_page_fixed():
+    """Fixed dimensionality reduction visualization interface"""
+    st.markdown('<h2 class="section-header">Dimensionality Visualization (t-SNE & UMAP)</h2>', unsafe_allow_html=True)
+    
+    st.write("""
+    Visualize the Fashion-MNIST dataset and your predictions in 2D space using t-SNE and UMAP. 
+    This helps understand how the model sees different clothing items and where your predictions fit.
+    """)
+    
+    # Configuration section
+    st.subheader("Configuration")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        viz_type = st.selectbox(
+            "Visualization Type",
+            ["Dataset Only", "Dataset + Predictions"],
+            help="Choose whether to visualize just the dataset or include your prediction images"
+        )
+        
+        embedding_method = st.selectbox(
+            "Embedding Method",
+            ["Both t-SNE and UMAP", "t-SNE only", "UMAP only"],
+            help="t-SNE preserves local structure, UMAP preserves both local and global structure"
+        )
+    
+    with col2:
+        n_dataset_samples = st.slider(
+            "Dataset Samples",
+            min_value=500,
+            max_value=5000,
+            value=2000,
+            step=500,
+            help="Number of Fashion-MNIST samples to include (more samples = longer computation)"
+        )
+        
+        feature_method = st.selectbox(
+            "Feature Extraction",
+            ["PCA (Recommended)", "Pixel Flattening", "Model Features"],
+            help="Method to extract features before dimensionality reduction"
+        )
+    
+    # Advanced parameters
+    with st.expander("Advanced Parameters"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**t-SNE Parameters**")
+            tsne_perplexity = st.slider("Perplexity", 5, 100, 30)
+            tsne_iterations = st.slider("Iterations", 500, 2000, 1000)
+        
+        with col2:
+            st.write("**UMAP Parameters**")
+            umap_neighbors = st.slider("N Neighbors", 5, 50, 15)
+            umap_min_dist = st.slider("Min Distance", 0.01, 0.5, 0.1)
+    
+    # Dataset-only visualization
+    if viz_type == "Dataset Only":
+        st.subheader("Dataset Visualization")
+        
+        if st.button("Generate Dataset Visualization", type="primary"):
+            with st.spinner("Preparing dataset and computing embeddings..."):
+                try:
+                    # Update visualizer model if available
+                    if st.session_state.predictor.model is not None:
+                        st.session_state.visualizer.model = st.session_state.predictor.model
+                    
+                    # Prepare dataset
+                    images, labels = st.session_state.visualizer.prepare_dataset_sample(n_dataset_samples)
+                    
+                    # Map feature method names
+                    feature_map = {
+                        "PCA (Recommended)": "pca",
+                        "Pixel Flattening": "flatten", 
+                        "Model Features": "model"
+                    }
+                    feature_method_key = feature_map[feature_method]
+                    
+                    # Extract features
+                    features = st.session_state.visualizer.extract_features(images, method=feature_method_key)
+                    
+                    # Initialize embedding variable
+                    embedding_for_analysis = None
+                    
+                    # Create embeddings and visualizations
+                    if embedding_method in ["Both t-SNE and UMAP", "t-SNE only"]:
+                        st.write("**t-SNE Visualization**")
+                        with st.spinner("Computing t-SNE embedding..."):
+                            # Use the compatible t-SNE function
+                            tsne_embedding = compute_tsne_compatible(
+                                features, perplexity=tsne_perplexity, max_iter=tsne_iterations
+                            )
+                            
+                            # Set this as the embedding for analysis
+                            embedding_for_analysis = tsne_embedding
+                            
+                            # Show t-SNE plot
+                            fig, ax = plt.subplots(figsize=(12, 10))
+                            
+                            for class_idx in range(10):
+                                mask = labels == class_idx
+                                if np.any(mask):
+                                    ax.scatter(
+                                        tsne_embedding[mask, 0], 
+                                        tsne_embedding[mask, 1],
+                                        c=st.session_state.visualizer.class_colors[class_idx],
+                                        label=st.session_state.data_loader.class_names[class_idx],
+                                        alpha=0.6,
+                                        s=20
+                                    )
+                            
+                            ax.set_title('t-SNE Visualization: Fashion-MNIST Dataset', fontsize=16, fontweight='bold')
+                            ax.set_xlabel('t-SNE Dimension 1')
+                            ax.set_ylabel('t-SNE Dimension 2')
+                            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+                            ax.grid(True, alpha=0.3)
+                            plt.tight_layout()
+                            st.pyplot(fig)
+                            plt.close()  # Important: close the figure to free memory
+                    
+                    if embedding_method in ["Both t-SNE and UMAP", "UMAP only"]:
+                        st.write("**UMAP Visualization**")
+                        with st.spinner("Computing UMAP embedding..."):
+                            umap_embedding = st.session_state.visualizer.compute_umap(
+                                features, n_neighbors=umap_neighbors, min_dist=umap_min_dist
+                            )
+                            
+                            # If t-SNE wasn't computed, use UMAP for analysis
+                            if embedding_for_analysis is None:
+                                embedding_for_analysis = umap_embedding
+                            
+                            # Show UMAP plot
+                            fig, ax = plt.subplots(figsize=(12, 10))
+                            
+                            for class_idx in range(10):
+                                mask = labels == class_idx
+                                if np.any(mask):
+                                    ax.scatter(
+                                        umap_embedding[mask, 0], 
+                                        umap_embedding[mask, 1],
+                                        c=st.session_state.visualizer.class_colors[class_idx],
+                                        label=st.session_state.data_loader.class_names[class_idx],
+                                        alpha=0.6,
+                                        s=20
+                                    )
+                            
+                            ax.set_title('UMAP Visualization: Fashion-MNIST Dataset', fontsize=16, fontweight='bold')
+                            ax.set_xlabel('UMAP Dimension 1')
+                            ax.set_ylabel('UMAP Dimension 2')
+                            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+                            ax.grid(True, alpha=0.3)
+                            plt.tight_layout()
+                            st.pyplot(fig)
+                            plt.close()  # Important: close the figure to free memory
+                    
+                    # Class separation analysis - only if we have an embedding
+                    if embedding_for_analysis is not None:
+                        st.subheader("Class Separation Analysis")
+                        with st.spinner("Analyzing class separation..."):
+                            from sklearn.metrics import silhouette_score
+                            silhouette_avg = silhouette_score(embedding_for_analysis, labels)
+                            
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Silhouette Score", f"{silhouette_avg:.3f}")
+                            with col2:
+                                unique_labels = len(np.unique(labels))
+                                st.metric("Classes Visualized", unique_labels)
+                            with col3:
+                                st.metric("Total Points", len(labels))
+                            
+                            # Distance analysis
+                            within_class_distances = []
+                            between_class_distances = []
+                            
+                            for class_idx in range(10):
+                                class_mask = labels == class_idx
+                                class_points = embedding_for_analysis[class_mask]
+                                
+                                if len(class_points) > 1:
+                                    from scipy.spatial.distance import pdist
+                                    within_distances = pdist(class_points)
+                                    within_class_distances.extend(within_distances)
+                                    
+                                    other_points = embedding_for_analysis[~class_mask]
+                                    for point in class_points:
+                                        distances_to_others = np.linalg.norm(other_points - point, axis=1)
+                                        between_class_distances.extend(distances_to_others[:100])  # Sample to avoid memory issues
+                            
+                            if within_class_distances and between_class_distances:
+                                separation_ratio = np.mean(between_class_distances) / np.mean(within_class_distances)
+                                
+                                st.write("**Distance Statistics:**")
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    st.metric("Avg Within-Class Distance", f"{np.mean(within_class_distances):.3f}")
+                                with col2:
+                                    st.metric("Avg Between-Class Distance", f"{np.mean(between_class_distances):.3f}")
+                                with col3:
+                                    st.metric("Separation Ratio", f"{separation_ratio:.3f}")
+                                
+                                # Distance distribution plot
+                                fig, ax = plt.subplots(figsize=(10, 6))
+                                ax.hist(within_class_distances, bins=50, alpha=0.7, label='Within-class', density=True)
+                                ax.hist(between_class_distances, bins=50, alpha=0.7, label='Between-class', density=True)
+                                ax.set_xlabel('Distance')
+                                ax.set_ylabel('Density')
+                                ax.set_title('Distance Distributions')
+                                ax.legend()
+                                ax.grid(True, alpha=0.3)
+                                st.pyplot(fig)
+                                plt.close()  # Add this line after st.pyplot(fig)
+                        
+                        st.success("Dataset visualization completed!")
+                        
+                except Exception as e:
+                    st.error(f"Error creating visualization: {e}")
+    
+    # Dataset + Predictions visualization
+    else:
+        st.subheader("Dataset + Predictions Visualization")
+        
+        # Check if model is loaded
+        if st.session_state.predictor.model is None:
+            st.warning("Please load a model first from the 'Load & Test Model' page")
+            return
+        
+        # File uploader for prediction images
+        uploaded_files = st.file_uploader(
+            "Upload clothing images for prediction visualization",
+            type=['png', 'jpg', 'jpeg', 'gif', 'bmp'],
+            accept_multiple_files=True,
+            help="Upload clothing images to see where they appear in the dataset visualization"
+        )
+        
+        if uploaded_files and st.button("Generate Visualization with Predictions", type="primary"):
+            with st.spinner("Processing images and computing embeddings..."):
+                try:
+                    # Save uploaded files temporarily
+                    temp_paths = []
+                    for uploaded_file in uploaded_files:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
+                            tmp_file.write(uploaded_file.getvalue())
+                            temp_paths.append(tmp_file.name)
+                    
+                    # Update visualizer model
+                    st.session_state.visualizer.model = st.session_state.predictor.model
+                    
+                    # Map embedding method
+                    embedding_map = {
+                        "Both t-SNE and UMAP": "both",
+                        "t-SNE only": "tsne",
+                        "UMAP only": "umap"
+                    }
+                    
+                    # Map feature method
+                    feature_map = {
+                        "PCA (Recommended)": "pca",
+                        "Pixel Flattening": "flatten",
+                        "Model Features": "model"
+                    }
+                    
+                    # Create visualization with predictions
+                    st.write("**Processing predictions and creating visualization...**")
+                    
+                    # Update visualizer model
+                    st.session_state.visualizer.model = st.session_state.predictor.model
+                    
+                    # Prepare dataset sample
+                    dataset_images, dataset_labels = st.session_state.visualizer.prepare_dataset_sample(n_dataset_samples)
+                    
+                    # Process prediction images
+                    prediction_images = []
+                    prediction_labels = []
+                    
+                    for image_path in temp_paths:
+                        try:
+                            model_input, _, _ = st.session_state.preprocessor.preprocess_image(image_path)
+                            prediction_images.append(model_input[0])
+                            
+                            pred_proba = st.session_state.predictor.model.predict(model_input, verbose=0)
+                            pred_class_idx = np.argmax(pred_proba[0])
+                            pred_class_name = st.session_state.data_loader.class_names[pred_class_idx]
+                            prediction_labels.append(pred_class_name)
+                        except Exception as e:
+                            st.error(f"Error processing image: {e}")
+                            continue
+                    
+                    if prediction_images:
+                        prediction_images = np.array(prediction_images)
+                        
+                        # Combine images for feature extraction
+                        all_images = np.concatenate([dataset_images, prediction_images])
+                        all_features = st.session_state.visualizer.extract_features(all_images, method=feature_map[feature_method])
+                        
+                        dataset_features = all_features[:len(dataset_images)]
+                        prediction_features = all_features[len(dataset_images):]
+                        
+                        # Create embeddings based on method
+                        if embedding_map[embedding_method] in ['tsne', 'both']:
+                            st.write("**t-SNE with Predictions**")
+                            # Use the compatible t-SNE function
+                            tsne_embedding = compute_tsne_compatible(all_features)
+                            dataset_tsne = tsne_embedding[:len(dataset_images)]
+                            prediction_tsne = tsne_embedding[len(dataset_images):]
+                            
+                            # Create t-SNE plot
+                            fig, ax = plt.subplots(figsize=(12, 10))
+                            
+                            # Plot dataset points
+                            for class_idx in range(10):
+                                mask = dataset_labels == class_idx
+                                if np.any(mask):
+                                    ax.scatter(
+                                        dataset_tsne[mask, 0], 
+                                        dataset_tsne[mask, 1],
+                                        c=st.session_state.visualizer.class_colors[class_idx],
+                                        label=st.session_state.data_loader.class_names[class_idx],
+                                        alpha=0.6,
+                                        s=20
+                                    )
+                            
+                            # Plot prediction points
+                            ax.scatter(
+                                prediction_tsne[:, 0],
+                                prediction_tsne[:, 1],
+                                c='black',
+                                marker='X',
+                                s=200,
+                                label='Your Predictions',
+                                edgecolors='white',
+                                linewidth=2
+                            )
+                            
+                            ax.set_title('t-SNE: Dataset + Your Predictions', fontsize=16, fontweight='bold')
+                            ax.set_xlabel('t-SNE Dimension 1')
+                            ax.set_ylabel('t-SNE Dimension 2')
+                            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+                            ax.grid(True, alpha=0.3)
+                            plt.tight_layout()
+                            st.pyplot(fig)
+                            plt.close()
+                        
+                        if embedding_map[embedding_method] in ['umap', 'both']:
+                            st.write("**UMAP with Predictions**") 
+                            umap_embedding = st.session_state.visualizer.compute_umap(all_features)
+                            dataset_umap = umap_embedding[:len(dataset_images)]
+                            prediction_umap = umap_embedding[len(dataset_images):]
+                            
+                            # Create UMAP plot
+                            fig, ax = plt.subplots(figsize=(12, 10))
+                            
+                            # Plot dataset points  
+                            for class_idx in range(10):
+                                mask = dataset_labels == class_idx
+                                if np.any(mask):
+                                    ax.scatter(
+                                        dataset_umap[mask, 0], 
+                                        dataset_umap[mask, 1],
+                                        c=st.session_state.visualizer.class_colors[class_idx],
+                                        label=st.session_state.data_loader.class_names[class_idx],
+                                        alpha=0.6,
+                                        s=20
+                                    )
+                            
+                            # Plot prediction points
+                            ax.scatter(
+                                prediction_umap[:, 0],
+                                prediction_umap[:, 1], 
+                                c='black',
+                                marker='X',
+                                s=200,
+                                label='Your Predictions',
+                                edgecolors='white',
+                                linewidth=2
+                            )
+                            
+                            ax.set_title('UMAP: Dataset + Your Predictions', fontsize=16, fontweight='bold')
+                            ax.set_xlabel('UMAP Dimension 1') 
+                            ax.set_ylabel('UMAP Dimension 2')
+                            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+                            ax.grid(True, alpha=0.3)
+                            plt.tight_layout()
+                            st.pyplot(fig)
+                            plt.close()
+                    else:
+                        st.error("No valid prediction images to visualize")
+                    
+                    # Clean up temporary files
+                    for temp_path in temp_paths:
+                        if os.path.exists(temp_path):
+                            os.unlink(temp_path)
+                    
+                    st.success("Visualization with predictions completed!")
+                    
+                except Exception as e:
+                    st.error(f"Error creating visualization: {e}")
+                    # Clean up temporary files on error
+                    for temp_path in temp_paths:
+                        if os.path.exists(temp_path):
+                            os.unlink(temp_path)
+
+
 # Configure Streamlit page
 st.set_page_config(
     page_title="Fashion-MNIST CNN Classifier",
@@ -922,8 +1385,8 @@ def dimensionality_visualization_page():
                     if embedding_method in ["Both t-SNE and UMAP", "t-SNE only"]:
                         st.write("**t-SNE Visualization**")
                         with st.spinner("Computing t-SNE embedding..."):
-                            tsne_embedding = st.session_state.visualizer.compute_tsne(
-                                features, perplexity=tsne_perplexity, n_iter=tsne_iterations
+                            tsne_embedding = compute_tsne_compatible(
+                                features, perplexity=tsne_perplexity, max_iter=tsne_iterations
                             )
                             
                             # Set this as the embedding for analysis
@@ -1134,7 +1597,7 @@ def dimensionality_visualization_page():
                         # Create embeddings based on method
                         if embedding_map[embedding_method] in ['tsne', 'both']:
                             st.write("**t-SNE with Predictions**")
-                            tsne_embedding = st.session_state.visualizer.compute_tsne(all_features)
+                            tsne_embedding = compute_tsne_compatible(all_features)
                             dataset_tsne = tsne_embedding[:len(dataset_images)]
                             prediction_tsne = tsne_embedding[len(dataset_images):]
                             

@@ -54,6 +54,7 @@ class DimensionalityVisualizer:
         elif method == 'model' and self.model is not None:
             # Use model's intermediate layer as features
             # Get features from the layer before final classification
+            import tensorflow as tf
             feature_extractor = tf.keras.Model(
                 inputs=self.model.input,
                 outputs=self.model.layers[-3].output  # Layer before final dense layers
@@ -120,12 +121,12 @@ class DimensionalityVisualizer:
     
     def compute_tsne(self, features, perplexity=30, max_iter=1000, random_state=42):
         """
-        Compute t-SNE embedding
+        Compute t-SNE embedding with compatibility for different scikit-learn versions
         
         Args:
             features: Feature vectors
             perplexity: t-SNE perplexity parameter
-            max_iter: Maximum number of iterations
+            max_iter: Maximum number of iterations (replaces n_iter in newer versions)
             random_state: Random seed
             
         Returns:
@@ -133,7 +134,7 @@ class DimensionalityVisualizer:
         """
         print(f"Computing t-SNE embedding (perplexity={perplexity})...")
         
-        # Handle both old and new parameter names for compatibility
+        # Try with max_iter first (newer scikit-learn versions)
         try:
             tsne = TSNE(
                 n_components=2,
@@ -143,14 +144,22 @@ class DimensionalityVisualizer:
                 verbose=1
             )
         except TypeError:
-            # Fallback for older scikit-learn versions
-            tsne = TSNE(
-                n_components=2,
-                perplexity=perplexity,
-                n_iter=max_iter,
-                random_state=random_state,
-                verbose=1
-            )
+            # Fallback for older scikit-learn versions that still use n_iter
+            try:
+                tsne = TSNE(
+                    n_components=2,
+                    perplexity=perplexity,
+                    n_iter=max_iter,  # Use old parameter name
+                    random_state=random_state,
+                    verbose=1
+                )
+            except TypeError:
+                # Last fallback with minimal parameters
+                tsne = TSNE(
+                    n_components=2,
+                    perplexity=perplexity,
+                    random_state=random_state
+                )
         
         embedding = tsne.fit_transform(features)
         print("✓ t-SNE completed")
