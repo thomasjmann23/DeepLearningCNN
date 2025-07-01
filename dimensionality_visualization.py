@@ -12,7 +12,6 @@ import umap
 import pandas as pd
 from datetime import datetime
 import os
-import tensorflow as tf
 
 from data_loader import FashionMNISTDataLoader
 from image_preprocessor import ImagePreprocessor
@@ -119,14 +118,14 @@ class DimensionalityVisualizer:
         print(f"✓ Prepared {len(self.dataset_images)} samples")
         return self.dataset_images, self.dataset_labels
     
-    def compute_tsne(self, features, perplexity=30, n_iter=1000, random_state=42):
+    def compute_tsne(self, features, perplexity=30, max_iter=1000, random_state=42):
         """
         Compute t-SNE embedding
         
         Args:
             features: Feature vectors
             perplexity: t-SNE perplexity parameter
-            n_iter: Number of iterations
+            max_iter: Maximum number of iterations
             random_state: Random seed
             
         Returns:
@@ -134,13 +133,24 @@ class DimensionalityVisualizer:
         """
         print(f"Computing t-SNE embedding (perplexity={perplexity})...")
         
-        tsne = TSNE(
-            n_components=2,
-            perplexity=perplexity,
-            n_iter=n_iter,
-            random_state=random_state,
-            verbose=1
-        )
+        # Handle both old and new parameter names for compatibility
+        try:
+            tsne = TSNE(
+                n_components=2,
+                perplexity=perplexity,
+                max_iter=max_iter,
+                random_state=random_state,
+                verbose=1
+            )
+        except TypeError:
+            # Fallback for older scikit-learn versions
+            tsne = TSNE(
+                n_components=2,
+                perplexity=perplexity,
+                n_iter=max_iter,
+                random_state=random_state,
+                verbose=1
+            )
         
         embedding = tsne.fit_transform(features)
         print("✓ t-SNE completed")
@@ -357,7 +367,7 @@ class DimensionalityVisualizer:
             print("Creating t-SNE Visualization")
             print("="*50)
             
-            tsne_embedding = self.compute_tsne(all_features)
+            tsne_embedding = self.compute_tsne(all_features, perplexity=30, max_iter=1000)
             dataset_tsne = tsne_embedding[:len(dataset_images)]
             prediction_tsne = tsne_embedding[len(dataset_images):]
             
@@ -505,7 +515,7 @@ def main():
     features = visualizer.extract_features(images, method='pca')
     
     # t-SNE visualization
-    tsne_embedding = visualizer.compute_tsne(features, perplexity=30)
+    tsne_embedding = visualizer.compute_tsne(features, perplexity=30, max_iter=1000)
     visualizer.create_visualization(
         tsne_embedding, labels, 
         't-SNE Visualization: Fashion-MNIST Dataset',
